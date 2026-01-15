@@ -121,25 +121,54 @@ const MainPage: React.FC = () => {
       return true;
     };
 
+    // 랜덤 셔플 함수
+    const shuffle = <T,>(array: T[]): T[] => {
+      const arr = [...array];
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      return arr;
+    };
+
     // 각 날짜별로 스케줄 배정
     for (let day of days) {
       newSchedule[day] = {};
 
-      // 하루에 필요한 인력 계산
+      // 하루에 필요한 인력 계산 (랜덤성 추가)
       const dailyShifts: string[] = [];
 
-      const workersToday = day % 3 === 0 ? 3 : 2;
+      // 랜덤하게 2-3명 근무 결정
+      const random = Math.random();
+      const workersToday = random < 0.4 ? 2 : random < 0.7 ? 3 : 2;
 
       if (workersToday === 3) {
-        dailyShifts.push('D', 'E', 'E');
+        // 3명 근무 시 D, E 조합을 랜덤하게
+        const patterns = [
+          ['D', 'E', 'E'],
+          ['D', 'D', 'E'],
+          ['E', 'E', 'D'],
+        ];
+        const pattern = patterns[Math.floor(Math.random() * patterns.length)];
+        dailyShifts.push(...pattern);
       } else {
-        dailyShifts.push('D', 'E');
+        // 2명 근무
+        const patterns = [
+          ['D', 'E'],
+          ['E', 'D'],
+          ['D', 'D'],
+          ['E', 'E'],
+        ];
+        const pattern = patterns[Math.floor(Math.random() * patterns.length)];
+        dailyShifts.push(...pattern);
       }
 
-      if (day % 7 === 0 || day % 7 === 3) {
+      // 나이트는 랜덤하게 추가 (20% 확률)
+      if (Math.random() < 0.2 && dailyShifts.length < numNurses) {
         dailyShifts.push('N');
       }
 
+      // 간호사 정렬에 랜덤성 추가
       const sortedNurses = [...nurses].sort((a, b) => {
         const aStats = nurseStats[a.id];
         const bStats = nurseStats[b.id];
@@ -154,13 +183,21 @@ const MainPage: React.FC = () => {
         const aDiff = Math.abs(aWorkRatio - targetRatio);
         const bDiff = Math.abs(bWorkRatio - targetRatio);
 
+        // 차이가 비슷하면 랜덤하게
+        if (Math.abs(aDiff - bDiff) < 0.1) {
+          return Math.random() - 0.5;
+        }
+
         return aDiff - bDiff;
       });
 
       const assignedNurses = new Set<number>();
 
+      // 근무 타입 순서를 랜덤하게 섞기
+      const shiftTypesOrder = shuffle(['D', 'E', 'N']);
+
       // 각 근무 타입별로 배정
-      for (let shiftType of ['D', 'E', 'N']) {
+      for (let shiftType of shiftTypesOrder) {
         const neededCount = dailyShifts.filter((s) => s === shiftType).length;
         if (neededCount === 0) continue;
 
@@ -169,6 +206,12 @@ const MainPage: React.FC = () => {
           .sort((a, b) => {
             const aShiftCount = nurseStats[a.id].shifts[shiftType as keyof (typeof nurseStats)[number]['shifts']];
             const bShiftCount = nurseStats[b.id].shifts[shiftType as keyof (typeof nurseStats)[number]['shifts']];
+
+            // 차이가 1 이하면 랜덤하게
+            if (Math.abs(aShiftCount - bShiftCount) <= 1) {
+              return Math.random() - 0.5;
+            }
+
             return aShiftCount - bShiftCount;
           });
 
