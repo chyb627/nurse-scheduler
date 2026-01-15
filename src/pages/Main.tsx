@@ -1,42 +1,6 @@
+import type { Nurse, NurseStats, Schedule, ShiftTypes } from '@/types/types';
 import React, { useState } from 'react';
 import { Calendar, Users, RotateCw } from 'lucide-react';
-
-// 타입 정의
-interface ShiftType {
-  label: string;
-  color: string;
-}
-
-interface ShiftTypes {
-  D: ShiftType;
-  E: ShiftType;
-  N: ShiftType;
-  OFF: ShiftType;
-}
-
-interface Nurse {
-  id: number;
-  name: string;
-}
-
-interface NurseStats {
-  offDays: number;
-  workDays: number;
-  consecutiveWork: number;
-  lastShift: string | null;
-  shifts: {
-    D: number;
-    E: number;
-    N: number;
-    OFF: number;
-  };
-}
-
-interface Schedule {
-  [day: number]: {
-    [nurseId: number]: string;
-  };
-}
 
 const NurseScheduleApp: React.FC = () => {
   const [currentMonth, setCurrentMonth] = useState<string>('2026-01');
@@ -44,11 +8,12 @@ const NurseScheduleApp: React.FC = () => {
   const [numNurses, setNumNurses] = useState<number>(4);
   const [offDaysPerNurse, setOffDaysPerNurse] = useState<number>(12);
   const [selectedNurseForCalendar, setSelectedNurseForCalendar] = useState<number | null>(null);
+  const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [nurses, setNurses] = useState<Nurse[]>([
-    { id: 1, name: '간호사1' },
-    { id: 2, name: '간호사2' },
-    { id: 3, name: '간호사3' },
-    { id: 4, name: '간호사4' },
+    { id: 1, name: '간호사1', preferences: {} },
+    { id: 2, name: '간호사2', preferences: {} },
+    { id: 3, name: '간호사3', preferences: {} },
+    { id: 4, name: '간호사4', preferences: {} },
   ]);
 
   // 근무 타입
@@ -92,7 +57,7 @@ const NurseScheduleApp: React.FC = () => {
       // 간호사 추가
       const newNurses = [...nurses];
       for (let i = nurses.length; i < numNurses; i++) {
-        newNurses.push({ id: i + 1, name: `간호사${i + 1}` });
+        newNurses.push({ id: i + 1, name: `간호사${i + 1}`, preferences: {} });
       }
       setNurses(newNurses);
     } else if (numNurses < nurses.length) {
@@ -106,8 +71,31 @@ const NurseScheduleApp: React.FC = () => {
     setNurses(nurses.map((nurse) => (nurse.id === id ? { ...nurse, name: newName } : nurse)));
   };
 
+  // 간호사 선호 근무 설정
+  const updateNursePreference = (nurseId: number, day: number, shift: string) => {
+    setNurses(
+      nurses.map((nurse) => {
+        if (nurse.id === nurseId) {
+          const newPreferences = { ...nurse.preferences };
+          if (shift === '') {
+            delete newPreferences[day];
+          } else {
+            newPreferences[day] = shift;
+          }
+          return { ...nurse, preferences: newPreferences };
+        }
+        return nurse;
+      }),
+    );
+  };
+
   // 스케줄 자동 생성
-  const generateSchedule = (): void => {
+  const generateSchedule = async (): Promise<void> => {
+    setIsGenerating(true);
+
+    // 약간의 딜레이로 로딩 표시
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
     const days = getDaysInMonth(currentMonth);
     const totalDays = days.length;
     const currentNurses = getNurses();
@@ -128,12 +116,17 @@ const NurseScheduleApp: React.FC = () => {
       };
     });
 
-    // 연속 근무 제한 체크
+    // 연속 근무 제한 체크 (나이트 다음날 강제 OFF)
     const canWork = (nurseId: number, day: number): boolean => {
       const stats = nurseStats[nurseId];
 
-      if (stats.consecutiveWork >= 5) return false;
+      // 나이트 다음날은 무조건 OFF (최우선)
       if (stats.lastShift === 'N') return false;
+
+      // 연속 근무 5일 이상이면 휴식 필요
+      if (stats.consecutiveWork >= 5) return false;
+
+      // OFF 목표치를 달성했으면 근무 가능
       if (stats.offDays >= targetOffDays) return true;
 
       const daysPassed = day;
@@ -159,15 +152,45 @@ const NurseScheduleApp: React.FC = () => {
     for (let day of days) {
       newSchedule[day] = {};
 
+      // 1단계: 선호 근무 먼저 배정
+      const assignedNurses = new Set<number>();
+      currentNurses.forEach((nurse) => {
+        const preference = nurse.preferences?.[day];
+        if (preference && canWork(nurse.id, day)) {
+          newSchedule[day][nurse.id] = preference;
+          const stats = nurseStats[nurse.id];
+          stats.shifts[preference as keyof typeof stats.shifts]++;
+          if (preference !== 'OFF') {
+            stats.workDays++;
+            stats.consecutiveWork++;
+          } else {
+            stats.offDays++;
+            stats.consecutiveWork = 0;
+          }
+          stats.lastShift = preference;
+          assignedNurses.add(nurse.id);
+        } else if (preference === 'OFF') {
+          // OFF 선호는 제약 없이 배정
+          newSchedule[day][nurse.id] = 'OFF';
+          const stats = nurseStats[nurse.id];
+          stats.shifts.OFF++;
+          stats.offDays++;
+          stats.consecutiveWork = 0;
+          stats.lastShift = 'OFF';
+          assignedNurses.add(nurse.id);
+        }
+      });
+
+      // 2단계: 나머지 자동 배정
+      const remainingNurses = currentNurses.filter((n) => !assignedNurses.has(n.id));
+
       // 하루에 필요한 인력 계산 (랜덤성 추가)
       const dailyShifts: string[] = [];
 
-      // 랜덤하게 2-3명 근무 결정
       const random = Math.random();
       const workersToday = random < 0.4 ? 2 : random < 0.7 ? 3 : 2;
 
       if (workersToday === 3) {
-        // 3명 근무 시 D, E 조합을 랜덤하게
         const patterns = [
           ['D', 'E', 'E'],
           ['D', 'D', 'E'],
@@ -176,7 +199,6 @@ const NurseScheduleApp: React.FC = () => {
         const pattern = patterns[Math.floor(Math.random() * patterns.length)];
         dailyShifts.push(...pattern);
       } else {
-        // 2명 근무
         const patterns = [
           ['D', 'E'],
           ['E', 'D'],
@@ -193,7 +215,7 @@ const NurseScheduleApp: React.FC = () => {
       }
 
       // 간호사 정렬에 랜덤성 추가
-      const sortedNurses = [...currentNurses].sort((a, b) => {
+      const sortedNurses = [...remainingNurses].sort((a, b) => {
         const aStats = nurseStats[a.id];
         const bStats = nurseStats[b.id];
 
@@ -207,15 +229,12 @@ const NurseScheduleApp: React.FC = () => {
         const aDiff = Math.abs(aWorkRatio - targetRatio);
         const bDiff = Math.abs(bWorkRatio - targetRatio);
 
-        // 차이가 비슷하면 랜덤하게
         if (Math.abs(aDiff - bDiff) < 0.1) {
           return Math.random() - 0.5;
         }
 
         return aDiff - bDiff;
       });
-
-      const assignedNurses = new Set<number>();
 
       // 근무 타입 순서를 랜덤하게 섞기
       const shiftTypesOrder = shuffle(['D', 'E', 'N']);
@@ -231,7 +250,6 @@ const NurseScheduleApp: React.FC = () => {
             const aShiftCount = nurseStats[a.id].shifts[shiftType as keyof (typeof nurseStats)[number]['shifts']];
             const bShiftCount = nurseStats[b.id].shifts[shiftType as keyof (typeof nurseStats)[number]['shifts']];
 
-            // 차이가 1 이하면 랜덤하게
             if (Math.abs(aShiftCount - bShiftCount) <= 1) {
               return Math.random() - 0.5;
             }
@@ -258,9 +276,19 @@ const NurseScheduleApp: React.FC = () => {
       }
 
       // 배정되지 않은 간호사는 OFF
-      currentNurses.forEach((nurse) => {
+      remainingNurses.forEach((nurse) => {
         if (!assignedNurses.has(nurse.id)) {
           const stats = nurseStats[nurse.id];
+
+          // 나이트 다음날이면 무조건 OFF
+          if (stats.lastShift === 'N') {
+            newSchedule[day][nurse.id] = 'OFF';
+            stats.shifts.OFF++;
+            stats.offDays++;
+            stats.consecutiveWork = 0;
+            stats.lastShift = 'OFF';
+            return;
+          }
 
           const daysPassed = day;
           const expectedOffByNow = (targetOffDays / totalDays) * daysPassed;
@@ -288,6 +316,7 @@ const NurseScheduleApp: React.FC = () => {
     }
 
     setSchedule(newSchedule);
+    setIsGenerating(false);
   };
 
   // 통계 계산
@@ -409,6 +438,7 @@ const NurseScheduleApp: React.FC = () => {
           justifyContent: 'center',
           zIndex: 1000,
           padding: '20px',
+          overflowY: 'auto',
         }}
         onClick={() => setSelectedNurseForCalendar(null)}
       >
@@ -416,8 +446,9 @@ const NurseScheduleApp: React.FC = () => {
           style={{
             backgroundColor: 'white',
             borderRadius: '12px',
-            padding: '32px',
+            padding: '20px',
             maxWidth: '900px',
+            width: '100%',
             maxHeight: '90vh',
             overflowY: 'auto',
             position: 'relative',
@@ -425,26 +456,27 @@ const NurseScheduleApp: React.FC = () => {
           onClick={(e) => e.stopPropagation()}
         >
           {/* 헤더 */}
-          <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ marginBottom: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <div>
-              <h2 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '8px', margin: 0 }}>
+              <h2 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '4px', margin: 0 }}>
                 {nurse.name}의 근무표
               </h2>
-              <p style={{ color: '#6b7280', margin: 0 }}>
+              <p style={{ color: '#6b7280', margin: 0, fontSize: '14px' }}>
                 {year}년 {month}월
               </p>
             </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               <button
                 onClick={() => downloadCalendar(nurseId)}
                 style={{
-                  padding: '10px 20px',
+                  padding: '8px 16px',
                   backgroundColor: '#10b981',
                   color: 'white',
-                  borderRadius: '8px',
+                  borderRadius: '6px',
                   fontWeight: '500',
                   cursor: 'pointer',
                   border: 'none',
+                  fontSize: '14px',
                 }}
               >
                 📥 이미지 저장
@@ -452,13 +484,14 @@ const NurseScheduleApp: React.FC = () => {
               <button
                 onClick={() => setSelectedNurseForCalendar(null)}
                 style={{
-                  padding: '10px 20px',
+                  padding: '8px 16px',
                   backgroundColor: '#ef4444',
                   color: 'white',
-                  borderRadius: '8px',
+                  borderRadius: '6px',
                   fontWeight: '500',
                   cursor: 'pointer',
                   border: 'none',
+                  fontSize: '14px',
                 }}
               >
                 ✕ 닫기
@@ -467,8 +500,14 @@ const NurseScheduleApp: React.FC = () => {
           </div>
 
           {/* 달력 */}
-          <div id={`calendar-${nurseId}`} style={{ backgroundColor: '#f9fafb', padding: '20px', borderRadius: '8px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '8px' }}>
+          <div id={`calendar-${nurseId}`} style={{ backgroundColor: '#f9fafb', padding: '16px', borderRadius: '8px' }}>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))',
+                gap: '8px',
+              }}
+            >
               {days.map((day) => {
                 const shift = schedule[day]?.[nurseId] || '-';
                 const shiftInfo = shiftTypes[shift as keyof ShiftTypes];
@@ -481,11 +520,11 @@ const NurseScheduleApp: React.FC = () => {
                     style={{
                       backgroundColor: shiftInfo?.color || '#E5E7EB',
                       color: shift === '-' ? '#6B7280' : 'white',
-                      padding: '16px',
+                      padding: '12px',
                       borderRadius: '8px',
                       textAlign: 'center',
                       border: isWeekendDay ? '3px solid #ef4444' : 'none',
-                      minHeight: '100px',
+                      minHeight: '90px',
                       display: 'flex',
                       flexDirection: 'column',
                       justifyContent: 'space-between',
@@ -503,11 +542,17 @@ const NurseScheduleApp: React.FC = () => {
           </div>
 
           {/* 통계 */}
-          <div style={{ marginTop: '24px', padding: '16px', backgroundColor: '#f3f4f6', borderRadius: '8px' }}>
-            <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '12px', margin: '0 0 12px 0' }}>
+          <div style={{ marginTop: '20px', padding: '16px', backgroundColor: '#f3f4f6', borderRadius: '8px' }}>
+            <h3 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px', margin: '0 0 12px 0' }}>
               이번 달 통계
             </h3>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px' }}>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(70px, 1fr))',
+                gap: '12px',
+              }}
+            >
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#7B9FE8' }}>{stats[nurseId]?.D || 0}</div>
                 <div style={{ fontSize: '12px', color: '#6b7280' }}>데이</div>
@@ -539,6 +584,12 @@ const NurseScheduleApp: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 p-4" style={{ minWidth: 'auto', width: '100%' }}>
+      <style>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
       <div className="max-w-full mx-auto" style={{ maxWidth: '100%', overflowX: 'auto' }}>
         {/* 헤더 */}
         <div className="bg-white rounded-lg shadow-sm mb-6" style={{ padding: '24px', margin: '0 0 24px 0' }}>
@@ -562,7 +613,7 @@ const NurseScheduleApp: React.FC = () => {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700" style={{ marginBottom: '8px' }}>
-                간호사 수 (최소 2)
+                간호사 수
               </label>
               <input
                 type="number"
@@ -576,7 +627,7 @@ const NurseScheduleApp: React.FC = () => {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700" style={{ marginBottom: '8px' }}>
-                1인당 OFF 일수 (최소 1)
+                1인당 OFF 일수
               </label>
               <input
                 type="number"
@@ -588,13 +639,14 @@ const NurseScheduleApp: React.FC = () => {
                 style={{ padding: '8px 12px', fontSize: '14px' }}
               />
             </div>
-            <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+            <div className="flex items-end">
               <button
                 onClick={generateSchedule}
+                disabled={isGenerating}
                 style={{
                   width: '100%',
                   padding: '10px 24px',
-                  backgroundColor: '#2563eb',
+                  backgroundColor: isGenerating ? '#9ca3af' : '#2563eb',
                   color: 'white',
                   borderRadius: '8px',
                   fontWeight: '500',
@@ -602,14 +654,23 @@ const NurseScheduleApp: React.FC = () => {
                   alignItems: 'center',
                   justifyContent: 'center',
                   gap: '8px',
-                  cursor: 'pointer',
+                  cursor: isGenerating ? 'not-allowed' : 'pointer',
                   border: 'none',
+                  transition: 'all 0.3s',
                 }}
-                onMouseOver={(e) => (e.currentTarget.style.backgroundColor = '#1d4ed8')}
-                onMouseOut={(e) => (e.currentTarget.style.backgroundColor = '#2563eb')}
+                onMouseOver={(e) => {
+                  if (!isGenerating) e.currentTarget.style.backgroundColor = '#1d4ed8';
+                }}
+                onMouseOut={(e) => {
+                  if (!isGenerating) e.currentTarget.style.backgroundColor = '#2563eb';
+                }}
               >
-                <RotateCw size={20} />
-                스케줄 생성
+                <RotateCw
+                  size={20}
+                  className={isGenerating ? 'animate-spin' : ''}
+                  style={isGenerating ? { animation: 'spin 1s linear infinite' } : {}}
+                />
+                {isGenerating ? '생성 중...' : '스케줄 생성'}
               </button>
             </div>
           </div>
@@ -673,6 +734,135 @@ const NurseScheduleApp: React.FC = () => {
                       fontSize: '14px',
                     }}
                   />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* 선호 근무 설정 */}
+          <div
+            style={{
+              marginBottom: '20px',
+              padding: '16px',
+              backgroundColor: '#eff6ff',
+              borderRadius: '8px',
+              border: '1px solid #bfdbfe',
+            }}
+          >
+            <h3 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '8px', color: '#1e40af' }}>
+              💡 선호 근무 설정 (선택사항)
+            </h3>
+            <p style={{ fontSize: '12px', color: '#4b5563', marginBottom: '12px' }}>
+              특정 날짜에 원하는 근무를 설정하세요. 스케줄 생성 시 우선 반영됩니다.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {nurses.map((nurse) => (
+                <div
+                  key={nurse.id}
+                  style={{
+                    padding: '12px',
+                    backgroundColor: 'white',
+                    borderRadius: '6px',
+                    border: '1px solid #e5e7eb',
+                  }}
+                >
+                  <div style={{ fontSize: '13px', fontWeight: '600', marginBottom: '8px', color: '#111827' }}>
+                    {nurse.name}
+                  </div>
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <input
+                      type="number"
+                      min="1"
+                      max={getDaysInMonth(currentMonth).length}
+                      placeholder="날짜"
+                      id={`day-${nurse.id}`}
+                      style={{
+                        width: '60px',
+                        padding: '6px 8px',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '4px',
+                        fontSize: '13px',
+                      }}
+                    />
+                    <span style={{ fontSize: '12px', color: '#6b7280' }}>일</span>
+                    <select
+                      id={`shift-${nurse.id}`}
+                      style={{
+                        padding: '6px 8px',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '4px',
+                        fontSize: '13px',
+                        flex: 1,
+                        minWidth: '80px',
+                      }}
+                    >
+                      <option value="">선택</option>
+                      <option value="D">D (데이)</option>
+                      <option value="E">E (이브닝)</option>
+                      <option value="N">N (나이트)</option>
+                      <option value="OFF">OFF (휴무)</option>
+                    </select>
+                    <button
+                      onClick={() => {
+                        const dayInput = document.getElementById(`day-${nurse.id}`) as HTMLInputElement;
+                        const shiftSelect = document.getElementById(`shift-${nurse.id}`) as HTMLSelectElement;
+                        const day = parseInt(dayInput.value);
+                        const shift = shiftSelect.value;
+                        if (day && shift) {
+                          updateNursePreference(nurse.id, day, shift);
+                          dayInput.value = '';
+                          shiftSelect.value = '';
+                        }
+                      }}
+                      style={{
+                        padding: '6px 12px',
+                        backgroundColor: '#3b82f6',
+                        color: 'white',
+                        borderRadius: '4px',
+                        fontSize: '12px',
+                        border: 'none',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      추가
+                    </button>
+                  </div>
+                  {/* 설정된 선호 근무 표시 */}
+                  {nurse.preferences && Object.keys(nurse.preferences).length > 0 && (
+                    <div style={{ marginTop: '8px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                      {Object.entries(nurse.preferences).map(([day, shift]) => (
+                        <span
+                          key={day}
+                          style={{
+                            fontSize: '11px',
+                            padding: '3px 8px',
+                            backgroundColor: '#dbeafe',
+                            color: '#1e40af',
+                            borderRadius: '12px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                          }}
+                        >
+                          {day}일: {shift}
+                          <button
+                            onClick={() => updateNursePreference(nurse.id, parseInt(day), '')}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#1e40af',
+                              cursor: 'pointer',
+                              padding: 0,
+                              fontSize: '14px',
+                              lineHeight: 1,
+                            }}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

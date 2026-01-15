@@ -1,5 +1,5 @@
-import "@/styles/globals.css";
-import MainPage from "@/page/Main";
+import '@/styles/globals.css';
+import MainPage from '@/pages/Main';
 
 function App() {
   return <MainPage />;
