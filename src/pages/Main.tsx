@@ -5,7 +5,7 @@ import { Calendar, Users, RotateCw } from 'lucide-react';
 const NurseScheduleApp: React.FC = () => {
   const [currentMonth, setCurrentMonth] = useState<string>('2026-01');
   const [schedule, setSchedule] = useState<Schedule>({});
-  const [numNurses, setNumNurses] = useState<number>(10);
+  const [numNurses, setNumNurses] = useState<number>(20);
   const [offDaysPerNurse, setOffDaysPerNurse] = useState<number>(12);
   const [selectedNurseForCalendar, setSelectedNurseForCalendar] = useState<number | null>(null);
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
@@ -691,7 +691,7 @@ const NurseScheduleApp: React.FC = () => {
                 className="w-full border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 style={{ padding: '8px 12px', fontSize: '14px', cursor: 'pointer' }}
               >
-                {[10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20].map((num) => (
+                {[10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25].map((num) => (
                   <option key={num} value={num}>
                     {num}명
                   </option>
