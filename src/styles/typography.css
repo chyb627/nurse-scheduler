@@ -1,0 +1,38 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-size-t1: 30px;
+  --font-size-t2: 26px;
+  --font-size-t3: 24px;
+  --font-size-t4: 20px;
+  --font-size-t5: 17px;
+  --font-size-t6: 15px;
+  --font-size-t7: 14px;
+  --font-size-t8: 12px;
+}
+@layer utilities {
+  .text-t1 {
+    font-size: var(--font-size-t1);
+  }
+  .text-t2 {
+    font-size: var(--font-size-t2);
+  }
+  .text-t3 {
+    font-size: var(--font-size-t3);
+  }
+  .text-t4 {
+    font-size: var(--font-size-t4);
+  }
+  .text-t5 {
+    font-size: var(--font-size-t5);
+  }
+  .text-t6 {
+    font-size: var(--font-size-t6);
+  }
+  .text-t7 {
+    font-size: var(--font-size-t7);
+  }
+  .text-t8 {
+    font-size: var(--font-size-t8);
+  }
+}
