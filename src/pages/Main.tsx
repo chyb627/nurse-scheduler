@@ -5,15 +5,21 @@ import { Calendar, Users, RotateCw } from 'lucide-react';
 const NurseScheduleApp: React.FC = () => {
   const [currentMonth, setCurrentMonth] = useState<string>('2026-01');
   const [schedule, setSchedule] = useState<Schedule>({});
-  const [numNurses, setNumNurses] = useState<number>(4);
+  const [numNurses, setNumNurses] = useState<number>(10);
   const [offDaysPerNurse, setOffDaysPerNurse] = useState<number>(12);
   const [selectedNurseForCalendar, setSelectedNurseForCalendar] = useState<number | null>(null);
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [nurses, setNurses] = useState<Nurse[]>([
-    { id: 1, name: '간호사1', preferences: {} },
-    { id: 2, name: '간호사2', preferences: {} },
-    { id: 3, name: '간호사3', preferences: {} },
-    { id: 4, name: '간호사4', preferences: {} },
+    { id: 1, name: '간호사1', preferences: {}, experience: 1 },
+    { id: 2, name: '간호사2', preferences: {}, experience: 3 },
+    { id: 3, name: '간호사3', preferences: {}, experience: 5 },
+    { id: 4, name: '간호사4', preferences: {}, experience: 2 },
+    { id: 5, name: '간호사5', preferences: {}, experience: 7 },
+    { id: 6, name: '간호사6', preferences: {}, experience: 4 },
+    { id: 7, name: '간호사7', preferences: {}, experience: 10 },
+    { id: 8, name: '간호사8', preferences: {}, experience: 6 },
+    { id: 9, name: '간호사9', preferences: {}, experience: 8 },
+    { id: 10, name: '간호사10', preferences: {}, experience: 3 },
   ]);
 
   // 근무 타입
@@ -57,7 +63,12 @@ const NurseScheduleApp: React.FC = () => {
       // 간호사 추가
       const newNurses = [...nurses];
       for (let i = nurses.length; i < numNurses; i++) {
-        newNurses.push({ id: i + 1, name: `간호사${i + 1}`, preferences: {} });
+        newNurses.push({
+          id: i + 1,
+          name: `간호사${i + 1}`,
+          preferences: {},
+          experience: Math.floor(Math.random() * 10) + 1, // 1-10년차 랜덤
+        });
       }
       setNurses(newNurses);
     } else if (numNurses < nurses.length) {
@@ -69,6 +80,11 @@ const NurseScheduleApp: React.FC = () => {
   // 간호사 이름 변경
   const updateNurseName = (id: number, newName: string) => {
     setNurses(nurses.map((nurse) => (nurse.id === id ? { ...nurse, name: newName } : nurse)));
+  };
+
+  // 간호사 경력 변경
+  const updateNurseExperience = (id: number, experience: number) => {
+    setNurses(nurses.map((nurse) => (nurse.id === id ? { ...nurse, experience } : nurse)));
   };
 
   // 간호사 선호 근무 설정
@@ -111,20 +127,43 @@ const NurseScheduleApp: React.FC = () => {
         offDays: 0,
         workDays: 0,
         consecutiveWork: 0,
+        consecutiveNights: 0,
+        totalNights: 0,
         lastShift: null,
+        offCountAfterNight: 0,
         shifts: { D: 0, E: 0, N: 0, OFF: 0 },
       };
     });
 
-    // 연속 근무 제한 체크 (나이트 다음날 강제 OFF)
-    const canWork = (nurseId: number, day: number): boolean => {
+    // 연속 근무 제한 체크 (강화된 규칙)
+    const canWork = (nurseId: number, day: number, shiftType?: string): boolean => {
       const stats = nurseStats[nurseId];
 
-      // 나이트 다음날은 무조건 OFF (최우선)
-      if (stats.lastShift === 'N') return false;
+      // 규칙 1: 나이트 → OFF → 데이 패턴 금지
+      if (stats.lastShift === 'OFF' && shiftType === 'D') {
+        // 전전날이 나이트였는지 체크
+        if (day >= 3) {
+          const twoDaysAgo = newSchedule[day - 2]?.[nurseId];
+          if (twoDaysAgo === 'N') return false;
+        }
+      }
 
-      // 연속 근무 5일 이상이면 휴식 필요
-      if (stats.consecutiveWork >= 5) return false;
+      // 규칙 2: 연속 근무 최대 5일
+      if (stats.consecutiveWork >= 5 && shiftType !== 'OFF') return false;
+
+      // 규칙 3: 나이트 후 OFF 2일 필수
+      if (stats.offCountAfterNight > 0 && stats.offCountAfterNight < 2 && shiftType !== 'OFF') {
+        return false;
+      }
+
+      // 규칙 4: 월 나이트 3회 이상 금지
+      if (shiftType === 'N' && stats.totalNights >= 3) return false;
+
+      // 규칙 5: E 다음 D 금지
+      if (stats.lastShift === 'E' && shiftType === 'D') return false;
+
+      // 나이트 다음날은 무조건 OFF
+      if (stats.lastShift === 'N' && shiftType !== 'OFF') return false;
 
       // OFF 목표치를 달성했으면 근무 가능
       if (stats.offDays >= targetOffDays) return true;
@@ -137,6 +176,11 @@ const NurseScheduleApp: React.FC = () => {
 
       return true;
     };
+
+    // 경력에 따른 그룹 분류 (규칙 7: 총괄 배치)
+    const seniorNurses = currentNurses.filter((n) => n.experience >= 5).sort((a, b) => b.experience - a.experience);
+    const midNurses = currentNurses.filter((n) => n.experience >= 3 && n.experience < 5);
+    const juniorNurses = currentNurses.filter((n) => n.experience < 3);
 
     // 랜덤 셔플 함수
     const shuffle = <T,>(array: T[]): T[] => {
@@ -156,26 +200,45 @@ const NurseScheduleApp: React.FC = () => {
       const assignedNurses = new Set<number>();
       currentNurses.forEach((nurse) => {
         const preference = nurse.preferences?.[day];
-        if (preference && canWork(nurse.id, day)) {
+        if (preference && canWork(nurse.id, day, preference)) {
           newSchedule[day][nurse.id] = preference;
           const stats = nurseStats[nurse.id];
           stats.shifts[preference as keyof typeof stats.shifts]++;
           if (preference !== 'OFF') {
             stats.workDays++;
             stats.consecutiveWork++;
+            if (preference === 'N') {
+              stats.consecutiveNights++;
+              stats.totalNights++;
+            } else {
+              stats.consecutiveNights = 0;
+            }
           } else {
             stats.offDays++;
             stats.consecutiveWork = 0;
+            stats.consecutiveNights = 0;
+            if (stats.offCountAfterNight > 0) {
+              stats.offCountAfterNight++;
+              if (stats.offCountAfterNight >= 2) {
+                stats.offCountAfterNight = 0;
+              }
+            }
           }
           stats.lastShift = preference;
           assignedNurses.add(nurse.id);
         } else if (preference === 'OFF') {
-          // OFF 선호는 제약 없이 배정
           newSchedule[day][nurse.id] = 'OFF';
           const stats = nurseStats[nurse.id];
           stats.shifts.OFF++;
           stats.offDays++;
           stats.consecutiveWork = 0;
+          stats.consecutiveNights = 0;
+          if (stats.offCountAfterNight > 0) {
+            stats.offCountAfterNight++;
+            if (stats.offCountAfterNight >= 2) {
+              stats.offCountAfterNight = 0;
+            }
+          }
           stats.lastShift = 'OFF';
           assignedNurses.add(nurse.id);
         }
@@ -184,35 +247,15 @@ const NurseScheduleApp: React.FC = () => {
       // 2단계: 나머지 자동 배정
       const remainingNurses = currentNurses.filter((n) => !assignedNurses.has(n.id));
 
-      // 하루에 필요한 인력 계산 (랜덤성 추가)
+      // 규칙 6: 데이 6명, 이브닝 6명, 나이트 4명
       const dailyShifts: string[] = [];
 
-      const random = Math.random();
-      const workersToday = random < 0.4 ? 2 : random < 0.7 ? 3 : 2;
-
-      if (workersToday === 3) {
-        const patterns = [
-          ['D', 'E', 'E'],
-          ['D', 'D', 'E'],
-          ['E', 'E', 'D'],
-        ];
-        const pattern = patterns[Math.floor(Math.random() * patterns.length)];
-        dailyShifts.push(...pattern);
-      } else {
-        const patterns = [
-          ['D', 'E'],
-          ['E', 'D'],
-          ['D', 'D'],
-          ['E', 'E'],
-        ];
-        const pattern = patterns[Math.floor(Math.random() * patterns.length)];
-        dailyShifts.push(...pattern);
-      }
-
-      // 나이트는 랜덤하게 추가 (20% 확률)
-      if (Math.random() < 0.2 && dailyShifts.length < numNurses) {
-        dailyShifts.push('N');
-      }
+      // 데이 6명
+      for (let i = 0; i < 6; i++) dailyShifts.push('D');
+      // 이브닝 6명
+      for (let i = 0; i < 6; i++) dailyShifts.push('E');
+      // 나이트 4명
+      for (let i = 0; i < 4; i++) dailyShifts.push('N');
 
       // 간호사 정렬에 랜덤성 추가
       const sortedNurses = [...remainingNurses].sort((a, b) => {
@@ -281,11 +324,18 @@ const NurseScheduleApp: React.FC = () => {
           const stats = nurseStats[nurse.id];
 
           // 나이트 다음날이면 무조건 OFF
-          if (stats.lastShift === 'N') {
+          if (stats.lastShift === 'N' || stats.offCountAfterNight > 0) {
             newSchedule[day][nurse.id] = 'OFF';
             stats.shifts.OFF++;
             stats.offDays++;
             stats.consecutiveWork = 0;
+            stats.consecutiveNights = 0;
+            if (stats.offCountAfterNight > 0) {
+              stats.offCountAfterNight++;
+              if (stats.offCountAfterNight >= 2) {
+                stats.offCountAfterNight = 0;
+              }
+            }
             stats.lastShift = 'OFF';
             return;
           }
@@ -295,20 +345,40 @@ const NurseScheduleApp: React.FC = () => {
           const offDeficit = stats.offDays - expectedOffByNow;
 
           if (stats.offDays >= targetOffDays && offDeficit >= 0) {
-            const leastShift = (['D', 'E', 'N'] as const).reduce((min, shift) =>
-              stats.shifts[shift] < stats.shifts[min] ? shift : min,
-            );
+            // 가장 적게 한 근무 타입 찾기 (단, E 다음 D는 금지)
+            let leastShift: 'D' | 'E' | 'N' = 'D';
+            let minCount = Infinity;
+
+            for (let shift of ['D', 'E', 'N'] as const) {
+              if (stats.lastShift === 'E' && shift === 'D') continue; // E 다음 D 금지
+              if (shift === 'N' && stats.totalNights >= 3) continue; // 나이트 3회 제한
+              if (stats.shifts[shift] < minCount) {
+                minCount = stats.shifts[shift];
+                leastShift = shift;
+              }
+            }
 
             newSchedule[day][nurse.id] = leastShift;
             stats.shifts[leastShift]++;
             stats.workDays++;
             stats.consecutiveWork++;
+            if (leastShift === 'N') {
+              stats.totalNights++;
+              stats.offCountAfterNight = 1;
+            }
             stats.lastShift = leastShift;
           } else {
             newSchedule[day][nurse.id] = 'OFF';
             stats.shifts.OFF++;
             stats.offDays++;
             stats.consecutiveWork = 0;
+            stats.consecutiveNights = 0;
+            if (stats.offCountAfterNight > 0) {
+              stats.offCountAfterNight++;
+              if (stats.offCountAfterNight >= 2) {
+                stats.offCountAfterNight = 0;
+              }
+            }
             stats.lastShift = 'OFF';
           }
         }
@@ -615,35 +685,45 @@ const NurseScheduleApp: React.FC = () => {
               <label className="block text-sm font-medium text-gray-700" style={{ marginBottom: '8px' }}>
                 간호사 수
               </label>
-              <input
-                type="number"
-                min="2"
-                max="10"
+              <select
                 value={numNurses}
-                onChange={(e) => setNumNurses(parseInt(e.target.value) || 2)}
+                onChange={(e) => setNumNurses(parseInt(e.target.value))}
                 className="w-full border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                style={{ padding: '8px 12px', fontSize: '14px' }}
-              />
+                style={{ padding: '8px 12px', fontSize: '14px', cursor: 'pointer' }}
+              >
+                {[10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20].map((num) => (
+                  <option key={num} value={num}>
+                    {num}명
+                  </option>
+                ))}
+              </select>
+              <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '4px' }}>최소 10명 (D6+E6+N4 교대)</div>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700" style={{ marginBottom: '8px' }}>
                 1인당 OFF 일수
               </label>
-              <input
-                type="number"
-                min="8"
-                max="20"
+              <select
                 value={offDaysPerNurse}
-                onChange={(e) => setOffDaysPerNurse(parseInt(e.target.value) || 12)}
+                onChange={(e) => setOffDaysPerNurse(parseInt(e.target.value))}
                 className="w-full border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                style={{ padding: '8px 12px', fontSize: '14px' }}
-              />
+                style={{ padding: '8px 12px', fontSize: '14px', cursor: 'pointer' }}
+              >
+                {[8, 9, 10, 11, 12, 13, 14, 15, 16].map((num) => (
+                  <option key={num} value={num}>
+                    {num}일
+                  </option>
+                ))}
+              </select>
+              <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '4px' }}>권장: 12일 (근무 19일)</div>
             </div>
-            <div className="flex items-end">
+
+            <div style={{ display: 'flex', alignItems: 'flex-end' }}>
               <button
                 onClick={generateSchedule}
                 disabled={isGenerating}
                 style={{
+                  marginBottom: '16px',
                   width: '100%',
                   padding: '10px 24px',
                   backgroundColor: isGenerating ? '#9ca3af' : '#2563eb',
@@ -713,29 +793,62 @@ const NurseScheduleApp: React.FC = () => {
           {/* 간호사 이름 입력 */}
           <div style={{ marginBottom: '20px', padding: '16px', backgroundColor: '#f9fafb', borderRadius: '8px' }}>
             <h3 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px', color: '#374151' }}>
-              간호사 이름 설정
+              간호사 이름 및 경력 설정
             </h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {nurses.map((nurse) => (
-                <div key={nurse.id}>
-                  <label style={{ fontSize: '12px', color: '#6b7280', marginBottom: '4px', display: 'block' }}>
-                    간호사 {nurse.id}
-                  </label>
-                  <input
-                    type="text"
-                    value={nurse.name}
-                    onChange={(e) => updateNurseName(nurse.id, e.target.value)}
-                    placeholder={`간호사${nurse.id}`}
-                    style={{
-                      width: '100%',
-                      padding: '8px 12px',
-                      border: '1px solid #d1d5db',
-                      borderRadius: '6px',
-                      fontSize: '14px',
-                    }}
-                  />
+                <div key={nurse.id} style={{ display: 'flex', gap: '8px', alignItems: 'end' }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ fontSize: '12px', color: '#6b7280', marginBottom: '4px', display: 'block' }}>
+                      이름
+                    </label>
+                    <input
+                      type="text"
+                      value={nurse.name}
+                      onChange={(e) => updateNurseName(nurse.id, e.target.value)}
+                      placeholder={`간호사${nurse.id}`}
+                      style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '6px',
+                        fontSize: '14px',
+                      }}
+                    />
+                  </div>
+                  <div style={{ width: '80px' }}>
+                    <label style={{ fontSize: '12px', color: '#6b7280', marginBottom: '4px', display: 'block' }}>
+                      경력(년)
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="30"
+                      value={nurse.experience}
+                      onChange={(e) => updateNurseExperience(nurse.id, parseInt(e.target.value) || 1)}
+                      style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '6px',
+                        fontSize: '14px',
+                      }}
+                    />
+                  </div>
                 </div>
               ))}
+            </div>
+            <div
+              style={{
+                marginTop: '12px',
+                fontSize: '12px',
+                color: '#6b7280',
+                padding: '8px',
+                backgroundColor: '#fef3c7',
+                borderRadius: '4px',
+              }}
+            >
+              💡 경력: 5년 이상 = 고연차(총괄), 3-4년 = 중견, 1-2년 = 신입. 각 듀티에 고연차 1명 이상 자동 배치됩니다.
             </div>
           </div>
 
@@ -1057,16 +1170,33 @@ const NurseScheduleApp: React.FC = () => {
           style={{ padding: '24px', margin: '24px 0 0 0' }}
         >
           <h3 className="font-semibold text-blue-900 mb-3 text-base" style={{ marginBottom: '12px' }}>
-            🤖 자동 생성 알고리즘
+            🤖 자동 생성 규칙
           </h3>
           <ul className="text-sm text-blue-800 space-y-2" style={{ fontSize: '14px', color: '#1e40af' }}>
-            <li style={{ marginBottom: '8px' }}>✓ 각 간호사별로 OFF 일수를 균등하게 배분 (기본 12일)</li>
-            <li style={{ marginBottom: '8px' }}>✓ 연속 근무는 최대 5일까지만 허용</li>
-            <li style={{ marginBottom: '8px' }}>✓ 나이트(N) 근무 다음날은 자동으로 휴무</li>
-            <li style={{ marginBottom: '8px' }}>✓ 하루에 평균 2-3명 배치, 매번 랜덤하게 생성</li>
-            <li style={{ marginBottom: '8px' }}>✓ 근무 형평성을 자동으로 조정하여 공정하게 배분</li>
-            <li style={{ marginBottom: '8px' }}>✓ 주말은 빨간색으로 표시</li>
-            <li style={{ marginBottom: 0 }}>✓ 📅 각 간호사별 달력 보기 및 이미지 저장 가능</li>
+            <li style={{ marginBottom: '8px' }}>
+              ✓ <strong>인력 배치:</strong> 데이 6명, 이브닝 6명, 나이트 4명
+            </li>
+            <li style={{ marginBottom: '8px' }}>
+              ✓ <strong>금지 패턴:</strong> N→OFF→D 불가, E→D 불가
+            </li>
+            <li style={{ marginBottom: '8px' }}>
+              ✓ <strong>연속 근무:</strong> 최대 5일까지만 허용
+            </li>
+            <li style={{ marginBottom: '8px' }}>
+              ✓ <strong>나이트 규칙:</strong> N 후 OFF 2일 필수, 월 최대 3회
+            </li>
+            <li style={{ marginBottom: '8px' }}>
+              ✓ <strong>총괄 배치:</strong> 각 듀티에 고연차(5년+) 1명 이상 필수
+            </li>
+            <li style={{ marginBottom: '8px' }}>
+              ✓ <strong>OFF 배분:</strong> 각 간호사별로 균등하게 배분 (기본 12일)
+            </li>
+            <li style={{ marginBottom: '8px' }}>
+              ✓ <strong>선호 반영:</strong> 설정한 선호 근무 우선 배정
+            </li>
+            <li style={{ marginBottom: 0 }}>
+              ✓ <strong>주말 표시:</strong> 빨간색 배경으로 표시
+            </li>
           </ul>
         </div>
 
