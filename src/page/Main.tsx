@@ -38,11 +38,18 @@ interface Schedule {
   };
 }
 
-const MainPage: React.FC = () => {
+const NurseScheduleApp: React.FC = () => {
   const [currentMonth, setCurrentMonth] = useState<string>('2026-01');
   const [schedule, setSchedule] = useState<Schedule>({});
   const [numNurses, setNumNurses] = useState<number>(4);
   const [offDaysPerNurse, setOffDaysPerNurse] = useState<number>(12);
+  const [selectedNurseForCalendar, setSelectedNurseForCalendar] = useState<number | null>(null);
+  const [nurses, setNurses] = useState<Nurse[]>([
+    { id: 1, name: '간호사1' },
+    { id: 2, name: '간호사2' },
+    { id: 3, name: '간호사3' },
+    { id: 4, name: '간호사4' },
+  ]);
 
   // 근무 타입
   const shiftTypes: ShiftTypes = {
@@ -76,17 +83,34 @@ const MainPage: React.FC = () => {
 
   // 간호사 배열 생성
   const getNurses = (): Nurse[] => {
-    return Array.from({ length: numNurses }, (_, i) => ({
-      id: i + 1,
-      name: `간호사${i + 1}`,
-    }));
+    return nurses;
+  };
+
+  // 간호사 수 변경 시 자동으로 추가/제거
+  React.useEffect(() => {
+    if (numNurses > nurses.length) {
+      // 간호사 추가
+      const newNurses = [...nurses];
+      for (let i = nurses.length; i < numNurses; i++) {
+        newNurses.push({ id: i + 1, name: `간호사${i + 1}` });
+      }
+      setNurses(newNurses);
+    } else if (numNurses < nurses.length) {
+      // 간호사 제거
+      setNurses(nurses.slice(0, numNurses));
+    }
+  }, [numNurses]);
+
+  // 간호사 이름 변경
+  const updateNurseName = (id: number, newName: string) => {
+    setNurses(nurses.map((nurse) => (nurse.id === id ? { ...nurse, name: newName } : nurse)));
   };
 
   // 스케줄 자동 생성
   const generateSchedule = (): void => {
     const days = getDaysInMonth(currentMonth);
     const totalDays = days.length;
-    const nurses = getNurses();
+    const currentNurses = getNurses();
     const newSchedule: Schedule = {};
 
     const targetOffDays = offDaysPerNurse;
@@ -94,7 +118,7 @@ const MainPage: React.FC = () => {
 
     // 간호사별 현재 상태 추적
     const nurseStats: { [key: number]: NurseStats } = {};
-    nurses.forEach((nurse) => {
+    currentNurses.forEach((nurse) => {
       nurseStats[nurse.id] = {
         offDays: 0,
         workDays: 0,
@@ -169,7 +193,7 @@ const MainPage: React.FC = () => {
       }
 
       // 간호사 정렬에 랜덤성 추가
-      const sortedNurses = [...nurses].sort((a, b) => {
+      const sortedNurses = [...currentNurses].sort((a, b) => {
         const aStats = nurseStats[a.id];
         const bStats = nurseStats[b.id];
 
@@ -234,7 +258,7 @@ const MainPage: React.FC = () => {
       }
 
       // 배정되지 않은 간호사는 OFF
-      nurses.forEach((nurse) => {
+      currentNurses.forEach((nurse) => {
         if (!assignedNurses.has(nurse.id)) {
           const stats = nurseStats[nurse.id];
 
@@ -268,10 +292,10 @@ const MainPage: React.FC = () => {
 
   // 통계 계산
   const calculateStats = () => {
-    const nurses = getNurses();
+    const currentNurses = getNurses();
     const stats: { [key: number]: { D: number; E: number; N: number; OFF: number; total: number } } = {};
 
-    nurses.forEach((nurse) => {
+    currentNurses.forEach((nurse) => {
       stats[nurse.id] = { D: 0, E: 0, N: 0, OFF: 0, total: 0 };
       for (let day in schedule) {
         const shift = schedule[day as any]?.[nurse.id];
@@ -286,7 +310,232 @@ const MainPage: React.FC = () => {
   };
 
   const stats = calculateStats();
-  const nurses = getNurses();
+  const displayNurses = getNurses();
+
+  // 달력 이미지로 저장
+  const downloadCalendar = (nurseId: number) => {
+    const calendarElement = document.getElementById(`calendar-${nurseId}`);
+    if (!calendarElement) return;
+
+    // html2canvas 대신 직접 canvas로 그리기
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // 캔버스 크기 설정
+    canvas.width = 800;
+    canvas.height = 600;
+
+    // 배경
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // 제목
+    ctx.fillStyle = '#111827';
+    ctx.font = 'bold 24px Pretendard, sans-serif';
+    const currentNurses = getNurses();
+    const nurse = currentNurses.find((n) => n.id === nurseId);
+    ctx.fillText(`${nurse?.name} - ${currentMonth} 근무표`, 40, 50);
+
+    // 달력 그리기
+    const days = getDaysInMonth(currentMonth);
+    const cellWidth = 100;
+    const cellHeight = 80;
+    const startX = 40;
+    const startY = 100;
+    const cols = 7;
+
+    days.forEach((day, index) => {
+      const row = Math.floor(index / cols);
+      const col = index % cols;
+      const x = startX + col * cellWidth;
+      const y = startY + row * cellHeight;
+
+      const shift = schedule[day]?.[nurseId] || '-';
+      const shiftInfo = shiftTypes[shift as keyof ShiftTypes];
+      const dayOfWeek = getDayOfWeek(currentMonth, day);
+
+      // 셀 배경
+      ctx.fillStyle = shiftInfo?.color || '#E5E7EB';
+      ctx.fillRect(x, y, cellWidth - 5, cellHeight - 5);
+
+      // 날짜
+      ctx.fillStyle = shift === '-' ? '#6B7280' : '#ffffff';
+      ctx.font = 'bold 16px Pretendard, sans-serif';
+      ctx.fillText(`${day}일`, x + 10, y + 25);
+
+      // 요일
+      ctx.font = '12px Pretendard, sans-serif';
+      ctx.fillText(dayOfWeek, x + 10, y + 45);
+
+      // 근무 타입
+      ctx.font = 'bold 20px Pretendard, sans-serif';
+      ctx.fillText(shift, x + 10, y + 70);
+    });
+
+    // 다운로드
+    canvas.toBlob((blob) => {
+      if (blob) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${nurse?.name}_${currentMonth}_근무표.png`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    });
+  };
+
+  // 달력 뷰 렌더링
+  const renderCalendarView = (nurseId: number) => {
+    const currentNurses = getNurses();
+    const nurse = currentNurses.find((n) => n.id === nurseId);
+    if (!nurse) return null;
+
+    const days = getDaysInMonth(currentMonth);
+    const [year, month] = currentMonth.split('-');
+
+    return (
+      <div
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          padding: '20px',
+        }}
+        onClick={() => setSelectedNurseForCalendar(null)}
+      >
+        <div
+          style={{
+            backgroundColor: 'white',
+            borderRadius: '12px',
+            padding: '32px',
+            maxWidth: '900px',
+            maxHeight: '90vh',
+            overflowY: 'auto',
+            position: 'relative',
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* 헤더 */}
+          <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <h2 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '8px', margin: 0 }}>
+                {nurse.name}의 근무표
+              </h2>
+              <p style={{ color: '#6b7280', margin: 0 }}>
+                {year}년 {month}월
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                onClick={() => downloadCalendar(nurseId)}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: '#10b981',
+                  color: 'white',
+                  borderRadius: '8px',
+                  fontWeight: '500',
+                  cursor: 'pointer',
+                  border: 'none',
+                }}
+              >
+                📥 이미지 저장
+              </button>
+              <button
+                onClick={() => setSelectedNurseForCalendar(null)}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: '#ef4444',
+                  color: 'white',
+                  borderRadius: '8px',
+                  fontWeight: '500',
+                  cursor: 'pointer',
+                  border: 'none',
+                }}
+              >
+                ✕ 닫기
+              </button>
+            </div>
+          </div>
+
+          {/* 달력 */}
+          <div id={`calendar-${nurseId}`} style={{ backgroundColor: '#f9fafb', padding: '20px', borderRadius: '8px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '8px' }}>
+              {days.map((day) => {
+                const shift = schedule[day]?.[nurseId] || '-';
+                const shiftInfo = shiftTypes[shift as keyof ShiftTypes];
+                const dayOfWeek = getDayOfWeek(currentMonth, day);
+                const isWeekendDay = isWeekend(currentMonth, day);
+
+                return (
+                  <div
+                    key={day}
+                    style={{
+                      backgroundColor: shiftInfo?.color || '#E5E7EB',
+                      color: shift === '-' ? '#6B7280' : 'white',
+                      padding: '16px',
+                      borderRadius: '8px',
+                      textAlign: 'center',
+                      border: isWeekendDay ? '3px solid #ef4444' : 'none',
+                      minHeight: '100px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      justifyContent: 'space-between',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '4px' }}>{day}일</div>
+                      <div style={{ fontSize: '12px', opacity: 0.9 }}>{dayOfWeek}</div>
+                    </div>
+                    <div style={{ fontSize: '24px', fontWeight: 'bold', marginTop: '8px' }}>{shift}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 통계 */}
+          <div style={{ marginTop: '24px', padding: '16px', backgroundColor: '#f3f4f6', borderRadius: '8px' }}>
+            <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '12px', margin: '0 0 12px 0' }}>
+              이번 달 통계
+            </h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px' }}>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#7B9FE8' }}>{stats[nurseId]?.D || 0}</div>
+                <div style={{ fontSize: '12px', color: '#6b7280' }}>데이</div>
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#B865D6' }}>{stats[nurseId]?.E || 0}</div>
+                <div style={{ fontSize: '12px', color: '#6b7280' }}>이브닝</div>
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#4A5568' }}>{stats[nurseId]?.N || 0}</div>
+                <div style={{ fontSize: '12px', color: '#6b7280' }}>나이트</div>
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#E8A577' }}>{stats[nurseId]?.OFF || 0}</div>
+                <div style={{ fontSize: '12px', color: '#6b7280' }}>휴무</div>
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#2563eb' }}>
+                  {stats[nurseId]?.total || 0}
+                </div>
+                <div style={{ fontSize: '12px', color: '#6b7280' }}>총 근무</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 p-4" style={{ minWidth: 'auto', width: '100%' }}>
@@ -313,7 +562,7 @@ const MainPage: React.FC = () => {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700" style={{ marginBottom: '8px' }}>
-                간호사 수
+                간호사 수 (최소 2)
               </label>
               <input
                 type="number"
@@ -327,7 +576,7 @@ const MainPage: React.FC = () => {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700" style={{ marginBottom: '8px' }}>
-                1인당 OFF 일수
+                1인당 OFF 일수 (최소 1)
               </label>
               <input
                 type="number"
@@ -399,6 +648,36 @@ const MainPage: React.FC = () => {
             <Users size={20} />
             간호사별 근무 통계
           </h2>
+
+          {/* 간호사 이름 입력 */}
+          <div style={{ marginBottom: '20px', padding: '16px', backgroundColor: '#f9fafb', borderRadius: '8px' }}>
+            <h3 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px', color: '#374151' }}>
+              간호사 이름 설정
+            </h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {nurses.map((nurse) => (
+                <div key={nurse.id}>
+                  <label style={{ fontSize: '12px', color: '#6b7280', marginBottom: '4px', display: 'block' }}>
+                    간호사 {nurse.id}
+                  </label>
+                  <input
+                    type="text"
+                    value={nurse.name}
+                    onChange={(e) => updateNurseName(nurse.id, e.target.value)}
+                    placeholder={`간호사${nurse.id}`}
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '6px',
+                      fontSize: '14px',
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {nurses.map((nurse) => (
               <div key={nurse.id} className="border border-gray-200 rounded-lg" style={{ padding: '16px' }}>
@@ -438,11 +717,30 @@ const MainPage: React.FC = () => {
                       justifyContent: 'space-between',
                       fontWeight: '600',
                       color: '#2563eb',
+                      marginBottom: '12px',
                     }}
                   >
                     <span>근무:</span>
                     <span>{stats[nurse.id]?.total || 0}</span>
                   </div>
+                  <button
+                    onClick={() => setSelectedNurseForCalendar(nurse.id)}
+                    style={{
+                      width: '100%',
+                      padding: '8px',
+                      backgroundColor: '#3b82f6',
+                      color: 'white',
+                      borderRadius: '6px',
+                      fontSize: '13px',
+                      fontWeight: '500',
+                      cursor: 'pointer',
+                      border: 'none',
+                    }}
+                    onMouseOver={(e) => (e.currentTarget.style.backgroundColor = '#2563eb')}
+                    onMouseOut={(e) => (e.currentTarget.style.backgroundColor = '#3b82f6')}
+                  >
+                    📅 달력 보기
+                  </button>
                 </div>
               </div>
             ))}
@@ -484,7 +782,7 @@ const MainPage: React.FC = () => {
                     >
                       날짜
                     </th>
-                    {nurses.map((nurse) => (
+                    {displayNurses.map((nurse) => (
                       <th
                         key={nurse.id}
                         style={{
@@ -523,7 +821,7 @@ const MainPage: React.FC = () => {
                             <div style={{ fontSize: '12px', color: '#6b7280' }}>{dayOfWeek}</div>
                           </div>
                         </td>
-                        {nurses.map((nurse) => {
+                        {displayNurses.map((nurse) => {
                           const shift = schedule[day]?.[nurse.id] || '-';
                           const shiftInfo = shiftTypes[shift as keyof ShiftTypes];
 
@@ -564,20 +862,29 @@ const MainPage: React.FC = () => {
         </div>
 
         {/* 설명 */}
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mt-6">
-          <h3 className="font-semibold text-blue-900 mb-3 text-base">🤖 자동 생성 알고리즘</h3>
-          <ul className="text-sm text-blue-800 space-y-2">
-            <li>✓ 각 간호사별로 OFF 일수를 균등하게 배분 (기본 12일)</li>
-            <li>✓ 연속 근무는 최대 5일까지만 허용</li>
-            <li>✓ 나이트(N) 근무 다음날은 자동으로 휴무</li>
-            <li>✓ 하루에 D(데이) 2명, E(이브닝) 2명 배치</li>
-            <li>✓ 근무 형평성을 자동으로 조정하여 공정하게 배분</li>
-            <li>✓ 주말은 빨간색으로 표시</li>
+        <div
+          className="bg-blue-50 border border-blue-200 rounded-lg p-6 mt-6"
+          style={{ padding: '24px', margin: '24px 0 0 0' }}
+        >
+          <h3 className="font-semibold text-blue-900 mb-3 text-base" style={{ marginBottom: '12px' }}>
+            🤖 자동 생성 알고리즘
+          </h3>
+          <ul className="text-sm text-blue-800 space-y-2" style={{ fontSize: '14px', color: '#1e40af' }}>
+            <li style={{ marginBottom: '8px' }}>✓ 각 간호사별로 OFF 일수를 균등하게 배분 (기본 12일)</li>
+            <li style={{ marginBottom: '8px' }}>✓ 연속 근무는 최대 5일까지만 허용</li>
+            <li style={{ marginBottom: '8px' }}>✓ 나이트(N) 근무 다음날은 자동으로 휴무</li>
+            <li style={{ marginBottom: '8px' }}>✓ 하루에 평균 2-3명 배치, 매번 랜덤하게 생성</li>
+            <li style={{ marginBottom: '8px' }}>✓ 근무 형평성을 자동으로 조정하여 공정하게 배분</li>
+            <li style={{ marginBottom: '8px' }}>✓ 주말은 빨간색으로 표시</li>
+            <li style={{ marginBottom: 0 }}>✓ 📅 각 간호사별 달력 보기 및 이미지 저장 가능</li>
           </ul>
         </div>
+
+        {/* 달력 팝업 */}
+        {selectedNurseForCalendar !== null && renderCalendarView(selectedNurseForCalendar)}
       </div>
     </div>
   );
 };
 
-export default MainPage;
+export default NurseScheduleApp;
